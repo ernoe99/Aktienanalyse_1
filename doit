@@ -1,0 +1,12 @@
+# 1. Verzeichnis
+mkdir -p ~/stock_analyzer && cd ~/stock_analyzer
+
+# 2. Virtuelle Umgebung
+python3 -m venv venv
+source venv/bin/activate
+
+# 3. Abhängigkeiten
+pip install -r requirements.txt
+
+# 4. Starten
+streamlit run stock_analyzer.py
