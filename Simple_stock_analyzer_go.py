@@ -37,9 +37,15 @@ st.markdown("""
         padding: 15px;
         margin: 5px;
     }
-    .positive { color: #00c853; }
-    .negative { color: #ff1744; }
-    .neutral { color: #ffc107; }
+    .metric-card h3 {
+        color: #1565c0;
+    }
+    .metric-card p b {
+        color: #1565c0;
+    }
+    .positive { color: #00a040; }
+    .negative { color: #d50000; }
+    .neutral { color: #f57c00; }
     .thumb-up { font-size: 24px; }
     .stTabs [data-baseweb="tab-list"] {
         gap: 8px;
@@ -53,6 +59,7 @@ st.markdown("""
         padding: 15px;
         margin: 10px 0;
         border-left: 4px solid #2196f3;
+        color: #1565c0;
     }
     .strategy-comparison {
         display: flex;
@@ -401,6 +408,14 @@ class StockAnalyzer:
             else:
                 # Wert ist Dezimal (z.B. 0.035)
                 metrics['dividend_yield'] = raw_dividend_yield * 100
+            
+            # Sicherheitsprüfung: Dividendenrendite sollte realistisch sein (0-20%)
+            if metrics['dividend_yield'] > 20:
+                # Wenn größer als 20%, ist wahrscheinlich ein Faktor 100 zu viel
+                metrics['dividend_yield'] = metrics['dividend_yield'] / 100
+            if metrics['dividend_yield'] > 20:
+                # Wenn immer noch größer als 20%, auf 0 setzen (unrealistisch)
+                metrics['dividend_yield'] = 0
         else:
             metrics['dividend_yield'] = 0
             
@@ -719,14 +734,39 @@ class StockAnalyzer:
             
             # Thumb 3: Jahresregel
             is_odd_year = current_year % 2 != 0
+            current_month = datetime.now().month
             
-            # Erste 5 Handelstage des Jahres
+            # Immer die ersten 5 Handelstage berechnen
             first_5_days = ytd_data.head(5)
             if len(first_5_days) >= 2:
                 first_5_days_return = ((first_5_days['Close'].iloc[-1] / first_5_days['Close'].iloc[0]) - 1) * 100
-                first_5_positive = first_5_days_return > 0
                 result['details']['first_5_days_return'] = first_5_days_return
+            
+            result['details']['current_month'] = current_month
+            
+            # Für die Regel: Januar nutzt erste 5 Tage, Feb-Dez nutzt gesamten Januar
+            if current_month == 1:
+                # Januar: Nutze erste 5 Tage für Bewertung
+                if 'first_5_days_return' in result['details']:
+                    first_5_positive = result['details']['first_5_days_return'] > 0
+                    evaluation_return = result['details']['first_5_days_return']
+            else:
+                # Februar bis Dezember: Nutze gesamten Januar für Bewertung
+                january_data = history[(history.index.year == current_year) & (history.index.month == 1)]
+                if not january_data.empty:
+                    first_jan_close = january_data['Close'].iloc[0]
+                    last_jan_close = january_data['Close'].iloc[-1]
+                    january_return = ((last_jan_close / first_jan_close) - 1) * 100
+                    first_5_positive = january_return > 0
+                    result['details']['january_return'] = january_return
+                    evaluation_return = january_return
+                else:
+                    # Fallback auf erste 5 Tage
+                    if 'first_5_days_return' in result['details']:
+                        first_5_positive = result['details']['first_5_days_return'] > 0
+                        evaluation_return = result['details']['first_5_days_return']
                 
+            if 'first_5_days_return' in result['details'] or 'january_return' in result['details']:
                 if is_odd_year:
                     result['thumb3']['value'] = first_5_positive
                     result['thumb3']['description'] = f'Ungerades Jahr: Erste 5 Tage {"positiv" if first_5_positive else "negativ"}'
@@ -1361,46 +1401,54 @@ def display_three_thumbs(thumbs_result: dict):
     with cols[0]:
         thumb1_emoji = "👍" if thumbs_result['thumb1']['value'] else "👎"
         thumb1_color = "positive" if thumbs_result['thumb1']['value'] else "negative"
+        price_vs_sma = thumbs_result['details'].get('price_vs_sma200', 0)
         st.markdown(f"""
         <div class="metric-card">
             <h3>{thumb1_emoji} Daumen 1</h3>
             <p><b>{thumbs_result['thumb1']['description']}</b></p>
-            <p class="{thumb1_color}">
-                {thumbs_result['details'].get('price_vs_sma200', 0):.2f}% über/unter SMA200
-            </p>
+            <p><b>Abstand zu SMA200:</b> <span class="{thumb1_color}">{price_vs_sma:+.2f}%</span></p>
         </div>
         """, unsafe_allow_html=True)
     
     with cols[1]:
         thumb2_emoji = "👍" if thumbs_result['thumb2']['value'] else "👎"
         thumb2_color = "positive" if thumbs_result['thumb2']['value'] else "negative"
+        ytd_return = thumbs_result['details'].get('ytd_return', 0)
         st.markdown(f"""
         <div class="metric-card">
             <h3>{thumb2_emoji} Daumen 2</h3>
             <p><b>{thumbs_result['thumb2']['description']}</b></p>
-            <p class="{thumb2_color}">
-                YTD: {thumbs_result['details'].get('ytd_return', 0):.2f}%
-            </p>
+            <p><b>YTD:</b> <span class="{thumb2_color}">{ytd_return:+.2f}%</span></p>
         </div>
         """, unsafe_allow_html=True)
     
     with cols[2]:
         thumb3_emoji = "👍" if thumbs_result['thumb3']['value'] else "👎"
         thumb3_color = "positive" if thumbs_result['thumb3']['value'] else "negative"
-        year_type = "Ungerade" if thumbs_result['details'].get('is_odd_year', True) else "Gerade"
+        current_month = thumbs_result['details'].get('current_month', 1)
+        first_5_return = thumbs_result['details'].get('first_5_days_return', 0)
+        
+        # Von Februar bis Dezember: Zusätzlich Januar Abschluss anzeigen
+        january_html = ""
+        if current_month > 1 and 'january_return' in thumbs_result['details']:
+            january_return = thumbs_result['details']['january_return']
+            january_color = "positive" if january_return > 0 else "negative"
+            january_html = f'<p><b>Januar Abschluss:</b> <span class="{january_color}">{january_return:+.2f}%</span></p>'
+        
+        # Komplettes HTML auf einmal bauen
         st.markdown(f"""
         <div class="metric-card">
             <h3>{thumb3_emoji} Daumen 3</h3>
             <p><b>{thumbs_result['thumb3']['description']}</b></p>
-            <p>Jahr: {year_type}</p>
-            <p class="{thumb3_color}">
-                Erste 5 Tage: {thumbs_result['details'].get('first_5_days_return', 0):.2f}%
-            </p>
+            <p><b>Erste 5 Tage:</b> <span class="{thumb3_color}">{first_5_return:+.2f}%</span></p>
+            {january_html}
         </div>
         """, unsafe_allow_html=True)
     
     with cols[3]:
         total = thumbs_result['total_thumbs']
+        year_type = "Ungerade" if thumbs_result['details'].get('is_odd_year', True) else "Gerade"
+        
         if total == 3:
             rating = "🟢 SEHR GUT"
             rating_color = "positive"
@@ -1414,6 +1462,7 @@ def display_three_thumbs(thumbs_result: dict):
         st.markdown(f"""
         <div class="metric-card">
             <h3>Gesamt: {total}/3</h3>
+            <p><b>Jahr: {year_type}</b></p>
             <p class="{rating_color}" style="font-size: 20px;"><b>{rating}</b></p>
             <p>{"👍" * total}{"👎" * (3-total)}</p>
         </div>
@@ -3501,8 +3550,12 @@ def main():
         with col2:
             st.metric(f"Aktueller Kurs ({display_currency})", f"{curr_symbol}{current_price_converted:,.2f}")
         with col3:
-            change = ((metrics.get('current_price', 0) / metrics.get('previous_close', 1)) - 1) * 100
-            st.metric("Tagesänderung", f"{change:+.2f}%")
+            previous_close = metrics.get('previous_close', 0)
+            if previous_close and previous_close > 0:
+                change = ((metrics.get('current_price', 0) / previous_close) - 1) * 100
+                st.metric("Tagesänderung", f"{change:+.2f}%")
+            else:
+                st.metric("Tagesänderung", "N/A")
         with col4:
             st.metric("3-Daumen", f"{thumbs['total_thumbs']}/3 👍")
         
