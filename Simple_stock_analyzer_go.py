@@ -4,7 +4,7 @@ Aktienanalyse-Tool für Optionenstrategie zur Rentenergänzung
 Streamlit-basierte Anwendung zur Analyse von Aktien und ETFs
 mit Fokus auf sichere Rendite durch Optionsstrategien.
 
-Autor: Claude Waxi
+Autor: Claude
 Version: 2.8 - Echte Strikes aus Optionskette + Börsenzeiten-Warnung
 """
 
@@ -17,6 +17,8 @@ from plotly.subplots import make_subplots
 from datetime import datetime, timedelta
 from scipy.stats import norm
 import pytz
+import time
+from functools import wraps
 import warnings
 warnings.filterwarnings('ignore')
 
@@ -67,6 +69,51 @@ st.markdown("""
     }
 </style>
 """, unsafe_allow_html=True)
+
+
+# ============================================
+# Rate Limiting Konfiguration
+# ============================================
+
+RATE_LIMIT_DELAY = 0.5  # Sekunden zwischen Requests
+MAX_RETRIES = 3
+CACHE_TTL = 600  # 10 Minuten
+
+
+def retry_with_backoff(max_retries=3, initial_delay=2, backoff_factor=2):
+    """
+    Decorator für automatische Wiederholungsversuche bei Rate Limiting
+    Exponential Backoff: 2s, 4s, 8s bei Fehlern
+    """
+    def decorator(func):
+        @wraps(func)
+        def wrapper(*args, **kwargs):
+            delay = initial_delay
+            last_exception = None
+            
+            for attempt in range(max_retries):
+                try:
+                    return func(*args, **kwargs)
+                except Exception as e:
+                    last_exception = e
+                    error_msg = str(e).lower()
+                    
+                    # Nur bei Rate Limiting wiederholen
+                    if 'rate limit' in error_msg or 'too many' in error_msg:
+                        if attempt < max_retries - 1:
+                            st.warning(f"⏳ Rate Limit erreicht. Warte {delay} Sekunden... (Versuch {attempt + 1}/{max_retries})")
+                            time.sleep(delay)
+                            delay *= backoff_factor
+                        else:
+                            st.error(f"❌ Nach {max_retries} Versuchen fehlgeschlagen. Bitte 1-2 Minuten warten und erneut versuchen.")
+                            raise Exception(f"Rate Limit überschritten nach {max_retries} Versuchen")
+                    else:
+                        # Andere Fehler direkt werfen
+                        raise
+            
+            raise last_exception
+        return wrapper
+    return decorator
 
 
 class CurrencyConverter:
@@ -282,28 +329,40 @@ currency_converter = CurrencyConverter()
 
 
 class StockAnalyzer:
-    """Hauptklasse für die Aktienanalyse"""
+    """Hauptklasse für die Aktienanalyse mit Rate Limiting"""
     
     def __init__(self, ticker: str):
+        """Initialisiert den Analyzer mit Rate Limiting"""
         self.ticker = ticker.upper()
+        # Verzögerung vor Ticker-Load um Rate Limiting zu vermeiden
+        time.sleep(RATE_LIMIT_DELAY)
         self.stock = yf.Ticker(self.ticker)
         self.info = self._get_info()
         self.history_5y = None
         self.history_1y = None
         self.options_data = None
         
+    @retry_with_backoff(max_retries=MAX_RETRIES, initial_delay=2)
     def _get_info(self) -> dict:
-        """Holt Basis-Informationen zum Ticker"""
+        """Holt Basis-Informationen zum Ticker mit Retry-Mechanismus"""
         try:
+            time.sleep(RATE_LIMIT_DELAY)
             return self.stock.info
         except Exception as e:
             st.error(f"Fehler beim Laden der Ticker-Informationen: {e}")
             return {}
     
+    @retry_with_backoff(max_retries=MAX_RETRIES, initial_delay=2)
     def get_history(self, period: str = "5y") -> pd.DataFrame:
-        """Holt historische Kursdaten"""
+        """Holt historische Kursdaten mit Retry-Mechanismus"""
         try:
-            return self.stock.history(period=period)
+            time.sleep(RATE_LIMIT_DELAY)
+            history = self.stock.history(period=period)
+            
+            if history.empty:
+                st.warning(f"Keine historischen Daten für {self.ticker} verfügbar")
+            
+            return history
         except Exception as e:
             st.error(f"Fehler beim Laden der Historie: {e}")
             return pd.DataFrame()
@@ -788,8 +847,9 @@ class StockAnalyzer:
         
         return result
     
+    @retry_with_backoff(max_retries=MAX_RETRIES, initial_delay=2)
     def get_options_info(self) -> dict:
-        """Holt Optionsinformationen mit erweiterter Kategorisierung"""
+        """Holt Optionsinformationen mit erweiterter Kategorisierung und Rate Limiting"""
         options_info = {
             'expiration_dates': [],
             'weekly': [],           # ≤14 Tage
@@ -802,6 +862,7 @@ class StockAnalyzer:
         }
         
         try:
+            time.sleep(RATE_LIMIT_DELAY)
             expirations = self.stock.options
             if expirations:
                 options_info['expiration_dates'] = list(expirations)
@@ -842,17 +903,23 @@ class StockAnalyzer:
                 if options_info['leaps']:
                     target_expirations.append(options_info['leaps'][0])
                 
+                # Rate Limiting: Pause zwischen Option Chain Calls
                 for exp in target_expirations:
                     try:
+                        time.sleep(RATE_LIMIT_DELAY)  # Pause vor jedem Call
                         chain = self.stock.option_chain(exp)
                         options_info['chains'][exp] = {
                             'calls': chain.calls,
                             'puts': chain.puts
                         }
-                    except:
+                    except Exception as e:
+                        # Stille Fehlerbehandlung für einzelne Chains
                         pass
                             
         except Exception as e:
+            # Bei schwerwiegenden Fehlern warnen
+            if 'rate limit' in str(e).lower():
+                st.warning(f"⚠️ Rate Limit bei Optionsdaten - einige Daten möglicherweise nicht verfügbar")
             pass
         
         return options_info
@@ -3468,8 +3535,18 @@ def display_strategy_builder(analyzer: StockAnalyzer, metrics: dict,
 # ============================================================================
 
 def main():
+    # ============================================
+    # Session State Initialisierung für Caching
+    # ============================================
+    if 'cached_analyzers' not in st.session_state:
+        st.session_state.cached_analyzers = {}
+    if 'cache_timestamps' not in st.session_state:
+        st.session_state.cache_timestamps = {}
+    if 'api_call_count' not in st.session_state:
+        st.session_state.api_call_count = 0
+    
     st.title("📊 Aktienanalyse für Optionenstrategie")
-    st.markdown("*Analyse-Tool für sichere Rendite zur Rentenergänzung - Version 2.8 (Echte Strikes + Börsenzeiten)*")
+    st.markdown("*Analyse-Tool für sichere Rendite zur Rentenergänzung - Version 2.8 (Echte Strikes + Börsenzeiten + Rate Limiting)*")
     
     # Sidebar
     with st.sidebar:
@@ -3481,7 +3558,22 @@ def main():
             help="z.B. KO für Coca-Cola, AAPL für Apple, SPY für S&P 500 ETF"
         ).upper()
         
-        analyze_button = st.button("🔍 Analysieren", type="primary", use_container_width=True)
+        # Cache-Info anzeigen
+        cache_age_seconds = 0
+        cache_valid = False
+        if ticker_input in st.session_state.cache_timestamps:
+            cache_age_seconds = time.time() - st.session_state.cache_timestamps[ticker_input]
+            cache_valid = cache_age_seconds < CACHE_TTL
+            if cache_valid:
+                cache_age_minutes = int(cache_age_seconds / 60)
+                st.caption(f"💾 Cache: {cache_age_minutes} Min alt (max {int(CACHE_TTL/60)} Min)")
+        
+        col1, col2 = st.columns(2)
+        with col1:
+            analyze_button = st.button("🔍 Analysieren", type="primary", use_container_width=True)
+        with col2:
+            force_reload = st.button("🔄 Neu laden", use_container_width=True, 
+                                    help="Lädt Daten neu (ignoriert Cache)")
         
         st.divider()
         
@@ -3516,19 +3608,77 @@ def main():
         
         **Ziel:** Hebel ~7x für sichere Zusatzrente
         """)
+        
+        # Rate Limiting Info
+        st.divider()
+        st.markdown("**📊 API Status**")
+        st.metric("API Calls (Session)", st.session_state.api_call_count)
+        if st.session_state.api_call_count > 20:
+            st.warning("⚠️ Viele API Calls - nutze Cache!")
+        st.caption("💡 Tipp: 'Analysieren' nutzt Cache, 'Neu laden' macht neue API Calls")
     
     # Hauptbereich
-    if analyze_button or 'analyzer' in st.session_state:
+    # ============================================
+    # Verbesserte Analyzer-Loading-Logik mit Cache
+    # ============================================
+    
+    # Entscheide ob neu laden nötig ist
+    should_load = False
+    use_cache = False
+    
+    if analyze_button or force_reload:
+        should_load = True
+        use_cache = False
+    elif ticker_input in st.session_state.cached_analyzers:
+        # Prüfe ob Cache noch gültig ist
+        cache_age = time.time() - st.session_state.cache_timestamps.get(ticker_input, 0)
+        if cache_age < CACHE_TTL:
+            use_cache = True
+        else:
+            st.info(f"💾 Cache für {ticker_input} ist abgelaufen ({int(cache_age/60)} Min alt). Lade neu...")
+            should_load = True
+    
+    # Lade Analyzer (neu oder aus Cache)
+    if should_load and ticker_input:
+        try:
+            with st.spinner(f"📊 Lade Daten für {ticker_input}... (API Call #{st.session_state.api_call_count + 1})"):
+                # Neuen Analyzer erstellen
+                analyzer = StockAnalyzer(ticker_input)
+                metrics = analyzer.get_key_metrics()
+                thumbs = analyzer.calculate_three_thumbs_rule()
+                
+                # Im Cache speichern
+                st.session_state.cached_analyzers[ticker_input] = {
+                    'analyzer': analyzer,
+                    'metrics': metrics,
+                    'thumbs': thumbs
+                }
+                st.session_state.cache_timestamps[ticker_input] = time.time()
+                st.session_state.api_call_count += 1
+                
+                st.success(f"✅ Daten für {ticker_input} geladen (Cache gültig für {int(CACHE_TTL/60)} Minuten)")
+                
+        except Exception as e:
+            st.error(f"❌ Fehler beim Laden von {ticker_input}: {e}")
+            st.info("💡 **Tipps bei Rate Limiting:**\n- Warte 1-2 Minuten\n- Nutze den Cache (Button 'Analysieren' statt 'Neu laden')\n- Versuche einen anderen Ticker")
+            return
+    
+    # Aus Cache laden
+    if use_cache and ticker_input in st.session_state.cached_analyzers:
+        cached_data = st.session_state.cached_analyzers[ticker_input]
+        analyzer = cached_data['analyzer']
+        metrics = cached_data['metrics']
+        thumbs = cached_data['thumbs']
         
-        if analyze_button:
-            with st.spinner(f"Lade Daten für {ticker_input}..."):
-                st.session_state['analyzer'] = StockAnalyzer(ticker_input)
-                st.session_state['metrics'] = st.session_state['analyzer'].get_key_metrics()
-                st.session_state['thumbs'] = st.session_state['analyzer'].calculate_three_thumbs_rule()
-        
-        analyzer = st.session_state['analyzer']
-        metrics = st.session_state['metrics']
-        thumbs = st.session_state['thumbs']
+        cache_age = time.time() - st.session_state.cache_timestamps[ticker_input]
+        st.caption(f"💾 Daten aus Cache geladen ({int(cache_age/60)} Min alt)")
+    
+    # Nur weitermachen wenn Analyzer vorhanden
+    if ticker_input and ticker_input in st.session_state.cached_analyzers:
+        cached_data = st.session_state.cached_analyzers[ticker_input]
+        analyzer = cached_data['analyzer']
+        metrics = cached_data['metrics']
+        thumbs = cached_data['thumbs']
         
         # Quellwährung aus Ticker-Info
         source_currency = metrics.get('currency', 'USD')
@@ -3847,6 +3997,41 @@ def main():
                 file_name=f"{analyzer.ticker}_analyse_{datetime.now().strftime('%Y%m%d')}.txt",
                 mime="text/plain"
             )
+    else:
+        # Keine Daten geladen - Anzeige für neuen Benutzer
+        st.info("👋 **Willkommen beim Aktienanalyse-Tool!**")
+        st.markdown("""
+        ### 🚀 So geht's:
+        1. Gib ein **Ticker-Symbol** in der Sidebar ein (z.B. AAPL, MSFT, KO)
+        2. Klicke auf **🔍 Analysieren**
+        3. Erhalte umfassende Analysen und Optionsstrategien
+        
+        ### 💡 Features:
+        - **3-Daumen-Regel** für schnelle Bewertung
+        - **Optionsanalyse** mit Strategiekombinationen
+        - **Strategy Builder** für optimale Kombinationen
+        - **Multi-Währung** Support (CHF, USD, EUR)
+        - **Rate Limiting** Schutz gegen API-Überlastung
+        
+        ### ⚡ Tipps:
+        - Der **Cache** speichert Daten für 10 Minuten
+        - Nutze **"Analysieren"** um Cache zu verwenden
+        - Nutze **"Neu laden"** nur bei wirklich neuen Daten
+        - Bei Rate Limit Fehlern: **1-2 Minuten warten**
+        """)
+        
+        st.divider()
+        
+        col1, col2, col3 = st.columns(3)
+        with col1:
+            st.markdown("#### 📊 Beliebt")
+            st.markdown("- AAPL (Apple)\n- MSFT (Microsoft)\n- GOOGL (Alphabet)")
+        with col2:
+            st.markdown("#### 🏦 Dividenden")
+            st.markdown("- KO (Coca-Cola)\n- JNJ (Johnson&Johnson)\n- PG (Procter&Gamble)")
+        with col3:
+            st.markdown("#### 📈 ETFs")
+            st.markdown("- SPY (S&P 500)\n- QQQ (Nasdaq 100)\n- IWM (Russell 2000)")
 
 
 if __name__ == "__main__":
