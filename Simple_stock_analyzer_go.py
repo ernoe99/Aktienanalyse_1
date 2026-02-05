@@ -4,7 +4,7 @@ Aktienanalyse-Tool für Optionenstrategie zur Rentenergänzung
 Streamlit-basierte Anwendung zur Analyse von Aktien und ETFs
 mit Fokus auf sichere Rendite durch Optionsstrategien.
 
-Autor: Claude
+Autor: Claude Waxi
 Version: 2.8 - Echte Strikes aus Optionskette + Börsenzeiten-Warnung
 """
 
