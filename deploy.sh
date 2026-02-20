@@ -64,7 +64,7 @@ fi
 # Schritt 4: Add, Commit, Push
 echo ""
 echo "📦 Adding files..."
-git add Simple_stock_analyzer_go.py requirements.txt README.md .gitignore
+git add Simple_stock_analyzer_go.py requirements.txt README.md
 echo -e "${GREEN}✅ Files added${NC}"
 
 echo ""
