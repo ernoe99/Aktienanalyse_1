@@ -75,7 +75,7 @@ st.markdown("""
 # Rate Limiting Konfiguration
 # ============================================
 
-RATE_LIMIT_DELAY = 1.0  # Sekunden zwischen Requests
+RATE_LIMIT_DELAY = 1.0  # Sekunden zwischen Requests war 0.5
 MAX_RETRIES = 3
 CACHE_TTL = 600  # 10 Minuten
 
