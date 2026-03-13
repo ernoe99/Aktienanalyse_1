@@ -5,7 +5,7 @@ Streamlit-basierte Anwendung zur Analyse von Aktien und ETFs
 mit Fokus auf sichere Rendite durch Optionsstrategien.
 
 Autor: Claude
-Version: 2.8 - Echte Strikes aus Optionskette + Börsenzeiten-Warnung
+Version: 2.9 - Separate Optionsanalyse (reduzierte API-Aufrufe)
 """
 
 import streamlit as st
@@ -75,7 +75,7 @@ st.markdown("""
 # Rate Limiting Konfiguration
 # ============================================
 
-RATE_LIMIT_DELAY = 1.0  # Sekunden zwischen Requests war 0.5
+RATE_LIMIT_DELAY = 2.0  # Sekunden zwischen Requests war 0.5
 MAX_RETRIES = 3
 CACHE_TTL = 600  # 10 Minuten
 
@@ -3544,9 +3544,11 @@ def main():
         st.session_state.cache_timestamps = {}
     if 'api_call_count' not in st.session_state:
         st.session_state.api_call_count = 0
+    if 'options_loaded' not in st.session_state:
+        st.session_state.options_loaded = {}  # Dict für jeden Ticker
     
     st.title("📊 Aktienanalyse für Optionenstrategie")
-    st.markdown("*Analyse-Tool für sichere Rendite zur Rentenergänzung - Version 2.8 (Echte Strikes + Börsenzeiten + Rate Limiting)*")
+    st.markdown("*Analyse-Tool für sichere Rendite zur Rentenergänzung - Version 2.9 (Separate Optionsanalyse)*")
     
     # Sidebar
     with st.sidebar:
@@ -3572,9 +3574,19 @@ def main():
         with col1:
             analyze_button = st.button("🔍 Analysieren", type="primary", use_container_width=True)
         with col2:
-            force_reload = st.button("🔄 Neu laden", use_container_width=True, 
+            force_reload = st.button("🔄 Neu laden", use_container_width=True,
                                     help="Lädt Daten neu (ignoriert Cache)")
-        
+
+        # Optionsanalyse Button (separat)
+        options_button = st.button("⚡ Optionen laden", use_container_width=True,
+                                   help="Lädt Optionsanalyse und Strategy Builder (reduziert initiale API-Aufrufe)")
+
+        # Zeige Status der Optionsdaten
+        if ticker_input in st.session_state.options_loaded and st.session_state.options_loaded[ticker_input]:
+            st.caption("⚡ Optionen: Geladen")
+        else:
+            st.caption("⚡ Optionen: Nicht geladen")
+
         st.divider()
         
         # Währungsauswahl
@@ -3625,10 +3637,13 @@ def main():
     # Entscheide ob neu laden nötig ist
     should_load = False
     use_cache = False
-    
+
     if analyze_button or force_reload:
         should_load = True
         use_cache = False
+        # Bei "Neu laden" Optionsdaten-Flag zurücksetzen
+        if force_reload and ticker_input:
+            st.session_state.options_loaded[ticker_input] = False
     elif ticker_input in st.session_state.cached_analyzers:
         # Prüfe ob Cache noch gültig ist
         cache_age = time.time() - st.session_state.cache_timestamps.get(ticker_input, 0)
@@ -3673,13 +3688,18 @@ def main():
         cache_age = time.time() - st.session_state.cache_timestamps[ticker_input]
         st.caption(f"💾 Daten aus Cache geladen ({int(cache_age/60)} Min alt)")
     
+    # Optionen laden wenn Button geklickt
+    if options_button and ticker_input:
+        st.session_state.options_loaded[ticker_input] = True
+        st.success("✅ Optionsanalyse wird geladen...")
+
     # Nur weitermachen wenn Analyzer vorhanden
     if ticker_input and ticker_input in st.session_state.cached_analyzers:
         cached_data = st.session_state.cached_analyzers[ticker_input]
         analyzer = cached_data['analyzer']
         metrics = cached_data['metrics']
         thumbs = cached_data['thumbs']
-        
+
         # Quellwährung aus Ticker-Info
         source_currency = metrics.get('currency', 'USD')
         
@@ -3977,11 +3997,56 @@ def main():
         # TAB 6: Optionsanalyse
         with tab6:
             st.header(f"⚡ Optionsanalyse (in {display_currency})")
-            display_options_analysis(analyzer, metrics, source_currency, display_currency, curr_symbol)
-        
+
+            # Prüfe ob Optionsdaten geladen werden sollen
+            if st.session_state.options_loaded.get(ticker_input, False):
+                display_options_analysis(analyzer, metrics, source_currency, display_currency, curr_symbol)
+            else:
+                st.info("📊 **Optionsanalyse nicht geladen**")
+                st.markdown("""
+                Die Optionsanalyse wurde noch nicht geladen, um initiale API-Aufrufe zu reduzieren.
+
+                **So laden Sie die Optionsanalyse:**
+                1. Klicken Sie in der Sidebar auf **"⚡ Optionen laden"**
+                2. Die Optionsanalyse wird dann hier angezeigt
+
+                **Was enthält die Optionsanalyse?**
+                - Implied Volatility (IV) vs. Historische Volatilität
+                - ATR (Average True Range) für Strike-Auswahl
+                - Verfügbare Optionsketten-Daten
+                - Strike-Empfehlungen für die 4-Bein-Strategie
+                - Signale für Short-Call Verkäufe
+                """)
+
+                if st.button("⚡ Jetzt Optionen laden", key="load_options_tab6"):
+                    st.session_state.options_loaded[ticker_input] = True
+                    st.rerun()
+
         # TAB 7: Strategie-Builder
         with tab7:
-            display_strategy_builder(analyzer, metrics, source_currency, display_currency, curr_symbol)
+            # Prüfe ob Optionsdaten geladen werden sollen
+            if st.session_state.options_loaded.get(ticker_input, False):
+                display_strategy_builder(analyzer, metrics, source_currency, display_currency, curr_symbol)
+            else:
+                st.info("🎯 **Strategy Builder nicht geladen**")
+                st.markdown("""
+                Der Strategy Builder wurde noch nicht geladen, um initiale API-Aufrufe zu reduzieren.
+
+                **So laden Sie den Strategy Builder:**
+                1. Klicken Sie in der Sidebar auf **"⚡ Optionen laden"**
+                2. Der Strategy Builder wird dann hier angezeigt
+
+                **Was enthält der Strategy Builder?**
+                - Interaktiver Builder für die 4-Bein-Optionsstrategie
+                - Optimale Strike-Kombinationen
+                - P&L-Berechnungen für verschiedene Szenarien
+                - Backtest-Funktionalität
+                - Exit-Signale und Risk-Management
+                """)
+
+                if st.button("⚡ Jetzt Optionen laden", key="load_options_tab7"):
+                    st.session_state.options_loaded[ticker_input] = True
+                    st.rerun()
         
         # Zusammenfassung
         st.divider()
@@ -4003,20 +4068,22 @@ def main():
         st.markdown("""
         ### 🚀 So geht's:
         1. Gib ein **Ticker-Symbol** in der Sidebar ein (z.B. AAPL, MSFT, KO)
-        2. Klicke auf **🔍 Analysieren**
-        3. Erhalte umfassende Analysen und Optionsstrategien
-        
+        2. Klicke auf **🔍 Analysieren** für Basis-Analyse
+        3. Klicke auf **⚡ Optionen laden** für Optionsanalyse und Strategy Builder
+        4. Erhalte umfassende Analysen und Optionsstrategien
+
         ### 💡 Features:
         - **3-Daumen-Regel** für schnelle Bewertung
-        - **Optionsanalyse** mit Strategiekombinationen
-        - **Strategy Builder** für optimale Kombinationen
+        - **Optionsanalyse** mit Strategiekombinationen (separat ladbar)
+        - **Strategy Builder** für optimale Kombinationen (separat ladbar)
         - **Multi-Währung** Support (CHF, USD, EUR)
         - **Rate Limiting** Schutz gegen API-Überlastung
-        
+
         ### ⚡ Tipps:
         - Der **Cache** speichert Daten für 10 Minuten
         - Nutze **"Analysieren"** um Cache zu verwenden
         - Nutze **"Neu laden"** nur bei wirklich neuen Daten
+        - **"Optionen laden"** reduziert initiale API-Aufrufe
         - Bei Rate Limit Fehlern: **1-2 Minuten warten**
         """)
         
