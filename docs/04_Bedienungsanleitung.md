@@ -80,7 +80,7 @@ flowchart LR
 
 | Element | Typ | Wirkung |
 |---|---|---|
-| **📄 Zusammenfassung erstellen** | Button | Erzeugt einen Textreport (Preisdaten, Bewertung, Dividende, Risiko, 3-Daumen, Strategieregeln) |
+| **📄 Zusammenfassung erstellen** | Button | Erzeugt einen Textreport (Preisdaten, Bewertung, Dividende, Risiko, 3-Daumen, Strategieregeln); Beträge in der gewählten **Anzeigewährung** inkl. verwendetem Wechselkurs |
 | **Zusammenfassung (kopieren oder speichern)** | Textbereich | Report zum Kopieren |
 | **💾 Als Textdatei herunterladen** | Download-Button | Datei `TICKER_analyse_JJJJMMTT.txt` |
 
@@ -217,5 +217,5 @@ Oberfläche änderbar.
 | „Keine Optionsdaten verfügbar“ | Für den Wert gibt es bei Yahoo keine Optionen (z. B. viele europäische Aktien) | US-gelisteten Wert bzw. ADR verwenden |
 | „Keine geeigneten Optionskombinationen gefunden“ | Eine benötigte Laufzeit (3–6, 6–12 oder 12–24 Mo) oder Strikes im Fenster fehlen | Anderen, liquideren Basiswert wählen |
 | Warnung „Börse geschlossen …“ im Backtest | Außerhalb der US-Handelszeiten sind Bid/Ask oft 0 oder veraltet | Während der Handelszeit (15:30–22:00 MEZ) erneut laden |
-| Seite lädt lange | Jede Interaktion lädt Kurshistorien/Optionsketten neu (2 s Pause je Anfrage) | Geduld; siehe [Bekannte Einschränkungen](02_Software_Design.md#28-bekannte-einschränkungen-und-verbesserungspotenzial) |
+| Erster Aufbau eines Reiters dauert lange | Beim ersten Laden eines Tickers bzw. der Optionen wird jede Yahoo-Anfrage mit 2 s Pause abgesetzt | Einmal abwarten – danach kommen die Daten 10 Min. aus dem Cache |
 | Wechselkurs wirkt veraltet | Yahoo nicht erreichbar → Fallback-Kurse | Später „Neu laden“ |

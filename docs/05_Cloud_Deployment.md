@@ -13,6 +13,7 @@ Das Repository ist so aufgebaut, dass es ohne Anpassungen auf **Streamlit Commun
 | `.devcontainer/devcontainer.json` | Codespaces: Python 3.11, installiert Abhängigkeiten, startet die App auf Port 8501 |
 | `.github/workflows/ci.yml` | GitHub Actions: Syntax-Check und Smoke-Tests bei jedem Push / PR |
 | `tests/test_app_smoke.py` | Startet die App headless (Streamlit `AppTest`) und prüft Widgets + Black-Scholes |
+| `tests/test_analyzer_offline.py` | Tests mit simuliertem Yahoo-Ticker: Daten-Cache, Strikes im Backtest, Zusammenfassung in Anzeigewährung |
 | `.gitignore` | Schließt `venv/`, Caches und `.streamlit/secrets.toml` aus |
 | `deploy.sh` | Commit + Push der App-Dateien und Hinweise für Streamlit Cloud |
 
@@ -110,9 +111,13 @@ pip install pytest
 pytest -q
 ```
 
-Die Smoke-Tests benötigen **keinen** Zugriff auf Yahoo Finance: Sie prüfen, dass die App ohne Ausnahme
-startet, die Sidebar-Widgets mit den erwarteten Standardwerten vorhanden sind und dass `black_scholes` die
-Put-Call-Parität erfüllt.
+Alle Tests benötigen **keinen** Zugriff auf Yahoo Finance:
+
+* `test_app_smoke.py` prüft, dass die App ohne Ausnahme startet, die Sidebar-Widgets mit den erwarteten
+  Standardwerten vorhanden sind und dass `black_scholes` die Put-Call-Parität erfüllt.
+* `test_analyzer_offline.py` ersetzt `yf.Ticker` durch einen simulierten Ticker (synthetische Kurse,
+  Dividenden und sechs Optionsketten) und zählt die Abrufe. Geprüft werden der Daten-Cache, die Strikes im
+  Backtest und die Zusammenfassung in Anzeigewährung.
 
 ## 5.6 Alternative App-Version
 

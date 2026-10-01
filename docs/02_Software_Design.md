@@ -251,6 +251,14 @@ Annahmen: risikoloser Zins **4 %**, Short-Call-Laufzeit **5 Tage**, Saisonalitä
 +0.3 (Ø-KW-Rendite < −0.3 %) bzw. −0.2 (> +0.3 %). Strikes der Basisbeine sind **echte Strikes** aus der
 Optionskette und werden nicht skaliert.
 
+Strikes im Backtest (`get_available_strikes`):
+
+* Die drei Basisbeine werden gegen die Kette **ihres** Verfalltermins geprüft (Long Call → Calls,
+  Short Put / Hedge Put → Puts); Abweichungen erscheinen als Warnung.
+* Die wöchentlichen Short Calls verwenden die Call-Strikes des kurzlaufenden Termins
+  (`short_call_sell`), sonst alle geladenen Call-Strikes, sonst das Standard-Raster von
+  `find_nearest_strike` (0.50 / 1.00 / 5.00) – dann mit Warnung.
+
 ### 2.5.10 Saisonalität (`get_seasonal_data`)
 
 Historie 10 Jahre → Tagesrenditen → Summe je (Jahr, ISO-KW) → je KW: Mittelwert, Standardabweichung,
@@ -290,9 +298,14 @@ Anzahl, Anteil positiver Jahre in %.
 
 | # | Beobachtung | Auswirkung | Vorschlag |
 |---|---|---|---|
-| 1 | Kurshistorien (`get_history`) und Optionsketten (`get_options_info`) werden **nicht** gecacht; sie werden bei jedem Rerun neu geladen. Bei geladenen Optionen ruft ein Rerun `get_options_info` mehrfach auf (Optionsanalyse, IV, Strategie-Optionen, Strategie-Builder). | Lange Ladezeiten (2 s Pause je Anfrage), höheres Rate-Limit-Risiko, besonders auf Streamlit Cloud | Ergebnisse im Analyzer-Objekt zwischenspeichern (z. B. `self.options_data`, Dict je Periode) oder `@st.cache_data(ttl=CACHE_TTL)` |
-| 2 | `get_available_strikes` ruft `analyzer.get_options_chain()` auf, das es nicht gibt; der Fehler wird abgefangen. | Strike-Validierung im Backtest ist wirkungslos; Short-Call-Strikes kommen aus dem Fallback-Raster (0.5 / 1 / 5) | Strikes aus `get_options_info()['chains']` ermitteln |
-| 3 | `generate_summary` gibt Preise immer mit `$` in Quellwährung aus. | Zusammenfassung ignoriert die gewählte Anzeigewährung | `format_number(..., to_currency=display_currency)` verwenden |
-| 4 | `CurrencyConverter` nutzt einen gemeinsamen `last_update` für alle Paare und `timedelta.seconds` (ignoriert Tage). | FX-Cache kann zu lange gültig bleiben | Zeitstempel je Paar, `total_seconds()` |
-| 5 | Alle Reiter werden bei jedem Rerun berechnet (Streamlit-Tabs sind nicht lazy). | Jede Interaktion (z. B. Ziel-Risiko ändern) lädt alle Daten neu | Kombination mit Punkt 1 lösen |
-| 6 | Börsenzeiten-Prüfung kennt keine US-Feiertage. | Hinweis „geöffnet“ an Feiertagen | Feiertagskalender ergänzen |
+| 1 | `CurrencyConverter` nutzt einen gemeinsamen `last_update` für alle Paare und `timedelta.seconds` (ignoriert Tage). | FX-Cache kann zu lange gültig bleiben | Zeitstempel je Paar, `total_seconds()` |
+| 2 | Alle Reiter werden bei jedem Rerun berechnet (Streamlit-Tabs sind nicht lazy). | Berechnungen laufen bei jeder Interaktion erneut; Yahoo-Abfragen entfallen dank Daten-Cache | Bei Bedarf Berechnungsergebnisse zusätzlich cachen |
+| 3 | Börsenzeiten-Prüfung kennt keine US-Feiertage. | Hinweis „geöffnet“ an Feiertagen | Feiertagskalender ergänzen |
+
+### Behobene Punkte
+
+| Problem | Lösung | Test |
+|---|---|---|
+| Kurshistorien, Dividenden, Kalender und Optionsketten wurden bei jedem Rerun neu geladen; `get_options_info` sogar mehrfach pro Seitenaufbau | Daten-Cache im `StockAnalyzer` (`_history_cache`, `_dividends`, `_calendar`, `options_data`); `get_history` liefert Kopien | `test_history_is_cached_and_copied`, `test_dividends_and_calendar_cached`, `test_options_loaded_once` |
+| `get_available_strikes` rief die nicht existierende Methode `get_options_chain()` auf → Backtest nutzte nur das Standard-Raster | Strikes aus `get_options_info()['chains']`, optional je Verfalltermin und Calls/Puts | `test_get_available_strikes`, `test_backtest_uses_real_chain_strikes` |
+| `generate_summary` gab Preise immer mit `$` in Quellwährung aus | Neue Parameter `source_currency`, `target_currency`, `curr_symbol`; Umrechnung über `currency_converter` | `test_summary_in_display_currency` |

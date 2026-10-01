@@ -21,12 +21,17 @@ classDiagram
         +str ticker
         +yf.Ticker stock
         +dict info
-        +DataFrame history_5y
-        +DataFrame history_1y
+        -dict _history_cache
+        -Series _dividends
+        -dict _calendar
         +dict options_data
         +__init__(ticker)
         -_get_info() dict
+        -_get_dividends() Series
+        -_get_calendar() dict
+        -_fetch_history(period) DataFrame
         +get_history(period) DataFrame
+        -_fetch_options_info() dict
         +is_etf() bool
         +get_holdings() DataFrame
         +get_key_metrics() dict
@@ -74,7 +79,7 @@ classDiagram
 
     StockAnalyzer *-- yf_Ticker : stock
     CurrencyConverter ..> yf_Ticker : FX-Ticker
-    StockAnalyzer ..> retry_with_backoff : _get_info / get_history / get_options_info
+    StockAnalyzer ..> retry_with_backoff : _get_info / _fetch_history / _fetch_options_info
     SessionState o-- "0..*" StockAnalyzer : cached_analyzers[ticker]
 ```
 
@@ -317,13 +322,13 @@ flowchart TB
 | `display_three_thumbs` | `thumbs_result` | – | 4 Karten mit Daumen und Gesamtbewertung |
 | `display_dividend_history` | `analyzer, source_currency, target_currency, curr_symbol` | – | Tabelle 10 Jahre, Einzelzahlungen, Ø-Rendite |
 | `display_options_analysis` | `analyzer, metrics, source_currency, target_currency, curr_symbol` | – | Reiter 6 komplett |
-| `generate_summary` | `analyzer, metrics, thumbs` | `str` | Text-Report zum Download |
+| `generate_summary` | `analyzer, metrics, thumbs, source_currency='USD', target_currency='USD', curr_symbol='$'` | `str` | Text-Report zum Download, Beträge in Anzeigewährung |
 | `calculate_strategy_combinations` | `analyzer, metrics, target_risk=5000, source_currency, target_currency` | `dict` | Top-5-Kombinationen (siehe 2.5.5) |
 | `calculate_short_call_signals` | `analyzer, metrics, num_base_contracts=1` | `dict` | MACD/SMA200/Saison-Score (siehe 2.5.6) |
 | `calculate_exit_signals` | `combination, current_price, original_price` | `dict` | Exit-Aktionen je Bein (siehe 2.5.7) |
 | `black_scholes` | `S, K, T, r, sigma, option_type='call'\|'put'` | `float` | Optionspreis |
 | `calculate_historical_volatility` | `prices: Series, window=30` | `float` | Vol p.a. dezimal, [0.05, 1.0] |
-| `get_available_strikes` | `analyzer` | `list` | Strikes der Kette (siehe Einschränkung #2) |
+| `get_available_strikes` | `analyzer, expiration=None, option_type='calls'\|'puts'` | `list` | Sortierte Strikes aus den geladenen Ketten (ein Termin oder alle) |
 | `find_nearest_strike` | `price, available_strikes, direction='above'\|'below'` | `float` | Nächster Strike bzw. Standardraster |
 | `is_market_open` | – | `(bool, str)` | NYSE/NASDAQ 9:30–16:00 ET, Mo–Fr |
 | `validate_strike` | `strike, available_strikes` | `(bool, float)` | Existenzprüfung + nächster Strike |
@@ -338,7 +343,8 @@ flowchart TB
 |---|---|---|
 | `__init__(ticker)` | `info` (über `_get_info`) | – |
 | `_get_info()` | `Ticker.info` (Retry) | `dict` |
-| `get_history(period)` | `Ticker.history` (Retry) | OHLCV-`DataFrame` |
+| `get_history(period)` | `Ticker.history` über `_fetch_history` (Retry), **einmal je Periode** | Kopie des OHLCV-`DataFrame` |
+| `_get_dividends()` / `_get_calendar()` | `Ticker.dividends` / `Ticker.calendar`, **einmal** | `Series` / Kalender |
 | `is_etf()` | – | `quoteType == 'ETF'` |
 | `get_holdings()` | `institutional_holders` → `major_holders` → `info['holdings']` | `DataFrame` |
 | `get_key_metrics()` | – (aus `info`) | `dict` (siehe 3.2) |
@@ -346,7 +352,7 @@ flowchart TB
 | `get_upcoming_dates()` | `dividends`, `calendar` | Ex-Dividende und Earnings (ggf. geschätzt) |
 | `calculate_*` (Indikatoren) | – | `DataFrame` mit zusätzlichen Spalten |
 | `calculate_three_thumbs_rule()` | `history("2y")` | `dict` (siehe 3.2) |
-| `get_options_info()` | `options`, `option_chain` ×≤9 (Retry) | `dict` (siehe 3.2) |
+| `get_options_info()` | `options`, `option_chain` ×≤9 über `_fetch_options_info` (Retry), **einmal** | `dict` (siehe 3.2) |
 | `calculate_implied_volatility()` | über `get_options_info` | `avg_call_iv, avg_put_iv, atm_iv, iv_percentile` |
 | `get_strategy_options()` | über `get_options_info` | 4 Beine mit `expiration, options, days` |
 | `get_seasonal_data()` | `history("10y")` | Week, Avg_Return, Std_Return, Count, Avg_Return_Pct, Positive_Pct |

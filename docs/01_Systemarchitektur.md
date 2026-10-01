@@ -158,6 +158,7 @@ flowchart TB
         C1["cached_analyzers[ticker]<br/>= analyzer, metrics, thumbs"]
         C2["cache_timestamps[ticker]<br/>gültig CACHE_TTL = 600 s"]
         C3["options_loaded[ticker]<br/>Optionsdaten nur auf Anforderung"]
+        C4["im Analyzer-Objekt:<br/>Historien je Periode · Dividenden<br/>Kalender · Optionsketten"]
     end
     subgraph E2["Ebene 2 – Prozess-Cache (CurrencyConverter)"]
         F1["rates – aktueller Kurs, 1 h"]
@@ -174,14 +175,16 @@ flowchart TB
 | Mechanismus | Wo | Wirkung |
 |---|---|---|
 | Sitzungs-Cache | `main()` | Erneutes Rendern nutzt dasselbe `StockAnalyzer`-Objekt (keine neue `info`-Abfrage) |
+| Daten-Cache im Analyzer | `StockAnalyzer.get_history`, `get_options_info`, `_get_dividends`, `_get_calendar` | Historien (je Periode), Dividenden, Kalender und Optionsketten werden pro Analyzer nur **einmal** geladen; Reruns und alle Reiter nutzen die gespeicherten Daten |
 | Getrenntes Laden der Optionen | Button **⚡ Optionen laden** | Optionsketten (bis zu 9 Abfragen) werden erst auf Wunsch geladen |
 | FX-Cache | `CurrencyConverter` | Wechselkurse werden prozessweit wiederverwendet |
 | Drosselung | `RATE_LIMIT_DELAY` | Mindestabstand zwischen Anfragen |
 | Exponentielles Backoff | `retry_with_backoff` | Automatischer Neuversuch bei Rate-Limit-Fehlern |
 
-> **Hinweis:** Der Sitzungs-Cache speichert das Analyzer-Objekt, **nicht** die Kurshistorien und
-> Optionsketten. Diese werden bei jedem Neuaufbau der Seite (jede Widget-Interaktion) erneut geladen.
-> Siehe [Software Design – Bekannte Einschränkungen](02_Software_Design.md#28-bekannte-einschränkungen-und-verbesserungspotenzial).
+> **Hinweis:** Weil die Daten am Analyzer-Objekt hängen, gilt für sie dieselbe Lebensdauer wie für den
+> Sitzungs-Cache (`CACHE_TTL` = 10 Min.). **🔄 Neu laden** oder ein abgelaufener Cache erzeugt einen neuen
+> Analyzer und lädt alle Daten frisch. Leere Ergebnisse (z. B. nach einem Rate-Limit) werden nicht
+> gespeichert, damit der nächste Rerun es erneut versucht.
 
 ## 1.7 Technologie-Stack
 
