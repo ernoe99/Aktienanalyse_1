@@ -1,0 +1,22 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+
+# Virtuelle Umgebungen
+venv/
+.venv/
+env/
+
+# Streamlit Secrets (niemals committen!)
+.streamlit/secrets.toml
+
+# Editor / OS
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+
+# Exportierte Analysen
+*_analyse_*.txt

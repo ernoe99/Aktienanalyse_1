@@ -47,6 +47,15 @@ source venv/bin/activate
 
 ## Schritt 4: Dateien erstellen
 
+### Empfohlen: Repository klonen
+
+```bash
+git clone https://github.com/ernoe99/Aktienanalyse_1.git ~/stock_analyzer
+cd ~/stock_analyzer
+```
+
+Danach direkt mit Schritt 5 weitermachen.
+
 ### Option A: Dateien manuell erstellen
 
 ```bash
@@ -57,11 +66,13 @@ yfinance>=0.2.31
 pandas>=2.0.0
 numpy>=1.24.0
 plotly>=5.18.0
+scipy>=1.11.0
+pytz>=2023.3
 EOF
 
-# stock_analyzer.py erstellen (aus dem Download kopieren)
+# Simple_stock_analyzer_go.py erstellen (aus dem Download kopieren)
 # Oder mit nano/vim bearbeiten:
-nano stock_analyzer.py
+nano Simple_stock_analyzer_go.py
 # Dann den Python-Code einfügen und speichern (Ctrl+O, Enter, Ctrl+X)
 ```
 
@@ -69,7 +80,7 @@ nano stock_analyzer.py
 
 ```bash
 # Falls Sie die Dateien heruntergeladen haben:
-cp ~/Downloads/stock_analyzer.py ~/stock_analyzer/
+cp ~/Downloads/Simple_stock_analyzer_go.py ~/stock_analyzer/
 cp ~/Downloads/requirements.txt ~/stock_analyzer/
 ```
 
@@ -100,7 +111,7 @@ Successfully installed streamlit-1.xx.x yfinance-0.2.xx pandas-2.x.x ...
 
 ```bash
 # Streamlit-App starten
-streamlit run stock_analyzer.py
+streamlit run Simple_stock_analyzer_go.py
 ```
 
 **Erwartete Ausgabe:**
@@ -134,7 +145,7 @@ Nach der Installation brauchen Sie nur noch:
 ```bash
 cd ~/stock_analyzer
 source venv/bin/activate
-streamlit run stock_analyzer.py
+streamlit run Simple_stock_analyzer_go.py
 ```
 
 ---
@@ -165,13 +176,13 @@ pip install -r requirements.txt --force-reinstall
 ### Problem: Port 8501 bereits belegt
 ```bash
 # Anderen Port verwenden
-streamlit run stock_analyzer.py --server.port 8502
+streamlit run Simple_stock_analyzer_go.py --server.port 8502
 ```
 
 ### Problem: Kein Display (Server ohne GUI)
 ```bash
 # Headless-Modus
-streamlit run stock_analyzer.py --server.headless true
+streamlit run Simple_stock_analyzer_go.py --server.headless true
 # Dann von anderem Rechner zugreifen via Network URL
 ```
 
@@ -181,19 +192,19 @@ streamlit run stock_analyzer.py --server.headless true
 
 ```bash
 # Anderen Port verwenden
-streamlit run stock_analyzer.py --server.port 8080
+streamlit run Simple_stock_analyzer_go.py --server.port 8080
 
 # Von anderen Geräten im Netzwerk zugreifen erlauben
-streamlit run stock_analyzer.py --server.address 0.0.0.0
+streamlit run Simple_stock_analyzer_go.py --server.address 0.0.0.0
 
 # Browser nicht automatisch öffnen
-streamlit run stock_analyzer.py --server.headless true
+streamlit run Simple_stock_analyzer_go.py --server.headless true
 
 # Debug-Modus
-streamlit run stock_analyzer.py --logger.level debug
+streamlit run Simple_stock_analyzer_go.py --logger.level debug
 
 # Alle Optionen kombinieren
-streamlit run stock_analyzer.py \
+streamlit run Simple_stock_analyzer_go.py \
     --server.port 8080 \
     --server.address 0.0.0.0 \
     --server.headless true
@@ -209,7 +220,7 @@ cat > ~/.local/share/applications/stock-analyzer.desktop << 'EOF'
 [Desktop Entry]
 Name=Stock Analyzer
 Comment=Aktienanalyse für Optionenstrategie
-Exec=bash -c "cd ~/stock_analyzer && source venv/bin/activate && streamlit run stock_analyzer.py"
+Exec=bash -c "cd ~/stock_analyzer && source venv/bin/activate && streamlit run Simple_stock_analyzer_go.py"
 Icon=utilities-system-monitor
 Terminal=true
 Type=Application

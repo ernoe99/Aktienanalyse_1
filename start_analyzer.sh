@@ -1,6 +1,6 @@
 #!/bin/bash
 #
-# start_analyzer.sh - Startskript für Stock Analyzer
+# start_analyzer.sh - Startskript für Stock Analyzer (lokal)
 # Verwendung: ./start_analyzer.sh [port]
 #
 
@@ -63,7 +63,7 @@ echo -e "${YELLOW}   Öffne im Browser: http://localhost:$PORT${NC}"
 echo -e "${YELLOW}   Beenden mit: Ctrl+C${NC}"
 echo ""
 
-streamlit run "$SCRIPT_DIR/stock_analyzer.py" \
+streamlit run "$SCRIPT_DIR/Simple_stock_analyzer_go.py" \
     --server.port "$PORT" \
     --server.headless true \
     --browser.gatherUsageStats false

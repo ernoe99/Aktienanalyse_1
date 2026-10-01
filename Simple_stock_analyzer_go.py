@@ -338,10 +338,39 @@ class StockAnalyzer:
         time.sleep(RATE_LIMIT_DELAY)
         self.stock = yf.Ticker(self.ticker)
         self.info = self._get_info()
-        self.history_5y = None
-        self.history_1y = None
+        # Daten-Cache: Das Analyzer-Objekt liegt im Session State (CACHE_TTL),
+        # dadurch werden Historien, Dividenden und Optionsketten bei Reruns
+        # nicht erneut von Yahoo geladen.
+        self._history_cache = {}
+        self._dividends = None
+        self._calendar = None
         self.options_data = None
-        
+
+    def _get_dividends(self) -> pd.Series:
+        """Dividenden-Historie (einmal pro Analyzer geladen)"""
+        if self._dividends is None:
+            self._dividends = self.stock.dividends
+        return self._dividends
+
+    def _get_calendar(self):
+        """Termin-Kalender (einmal pro Analyzer geladen)"""
+        if self._calendar is None:
+            self._calendar = self.stock.calendar
+        return self._calendar
+
+    def get_history(self, period: str = "5y") -> pd.DataFrame:
+        """
+        Historische Kursdaten aus dem Cache bzw. von Yahoo.
+        Liefert immer eine Kopie, damit Aufrufer den Cache nicht verändern.
+        """
+        if period not in self._history_cache:
+            history = self._fetch_history(period)
+            if history.empty:
+                # Leere Ergebnisse nicht cachen, damit ein späterer Rerun neu lädt
+                return history
+            self._history_cache[period] = history
+        return self._history_cache[period].copy()
+
     @retry_with_backoff(max_retries=MAX_RETRIES, initial_delay=2)
     def _get_info(self) -> dict:
         """Holt Basis-Informationen zum Ticker mit Retry-Mechanismus"""
@@ -353,7 +382,7 @@ class StockAnalyzer:
             return {}
     
     @retry_with_backoff(max_retries=MAX_RETRIES, initial_delay=2)
-    def get_history(self, period: str = "5y") -> pd.DataFrame:
+    def _fetch_history(self, period: str = "5y") -> pd.DataFrame:
         """Holt historische Kursdaten mit Retry-Mechanismus"""
         try:
             time.sleep(RATE_LIMIT_DELAY)
@@ -503,7 +532,7 @@ class StockAnalyzer:
         """
         try:
             # Hole alle Dividenden
-            dividends = self.stock.dividends
+            dividends = self._get_dividends()
             if dividends.empty:
                 return pd.DataFrame()
             
@@ -611,7 +640,7 @@ class StockAnalyzer:
                     dates_info['ex_dividend_estimated'] = True
                     
                     # Hole Dividenden-Historie für Muster-Erkennung
-                    dividends = self.stock.dividends
+                    dividends = self._get_dividends()
                     if not dividends.empty and len(dividends) >= 2:
                         # Timezone entfernen für Vergleiche
                         div_index = dividends.index
@@ -651,7 +680,7 @@ class StockAnalyzer:
         # Earnings-Datum
         try:
             # Versuche über Calendar
-            calendar = self.stock.calendar
+            calendar = self._get_calendar()
             if calendar is not None and not calendar.empty:
                 if 'Earnings Date' in calendar.index:
                     earnings_dates = calendar.loc['Earnings Date']
@@ -847,8 +876,22 @@ class StockAnalyzer:
         
         return result
     
-    @retry_with_backoff(max_retries=MAX_RETRIES, initial_delay=2)
     def get_options_info(self) -> dict:
+        """
+        Optionsinformationen aus dem Cache bzw. von Yahoo.
+        Wird pro Seitenaufbau von mehreren Funktionen genutzt (Optionsanalyse,
+        IV, Strategie-Builder, Backtest) und daher nur einmal pro Analyzer geladen.
+        """
+        if self.options_data is None:
+            options_info = self._fetch_options_info()
+            if not options_info['chains']:
+                # Ohne Optionsketten nicht cachen, damit ein späterer Rerun neu lädt
+                return options_info
+            self.options_data = options_info
+        return self.options_data
+    
+    @retry_with_backoff(max_retries=MAX_RETRIES, initial_delay=2)
+    def _fetch_options_info(self) -> dict:
         """Holt Optionsinformationen mit erweiterter Kategorisierung und Rate Limiting"""
         options_info = {
             'expiration_dates': [],
@@ -2006,10 +2049,22 @@ def display_options_analysis(analyzer: StockAnalyzer, metrics: dict,
                 st.dataframe(puts_df, use_container_width=True)
 
 
-def generate_summary(analyzer: StockAnalyzer, metrics: dict, thumbs: dict) -> str:
-    """Generiert eine Zusammenfassung zum Abspeichern"""
+def generate_summary(analyzer: StockAnalyzer, metrics: dict, thumbs: dict,
+                     source_currency: str = 'USD', target_currency: str = 'USD',
+                     curr_symbol: str = '$') -> str:
+    """Generiert eine Zusammenfassung zum Abspeichern (Beträge in Anzeigewährung)"""
     
     div_yield = metrics.get('dividend_yield', 0)
+    
+    def price(key):
+        """Preis aus metrics in Anzeigewährung umrechnen und formatieren"""
+        value = currency_converter.convert(metrics.get(key) or 0, source_currency, target_currency)
+        return f"{curr_symbol}{value:,.2f}"
+    
+    currency_line = f"WÄHRUNG: {target_currency}"
+    if source_currency != target_currency:
+        fx = currency_converter.get_exchange_rate(source_currency, target_currency)
+        currency_line += f" (umgerechnet aus {source_currency}, 1 {source_currency} = {fx:.4f} {target_currency})"
     
     summary = f"""
 ================================================================================
@@ -2021,14 +2076,15 @@ TICKER: {analyzer.ticker}
 NAME: {metrics.get('name', 'N/A')}
 SEKTOR: {metrics.get('sector', 'N/A')}
 INDUSTRIE: {metrics.get('industry', 'N/A')}
+{currency_line}
 
 --------------------------------------------------------------------------------
                          PREISDATEN
 --------------------------------------------------------------------------------
-Aktueller Kurs:     ${metrics.get('current_price', 0):,.2f}
-52-Wochen-Hoch:     ${metrics.get('52w_high', 0):,.2f}
-52-Wochen-Tief:     ${metrics.get('52w_low', 0):,.2f}
-Marktkapitalisierung: {format_number(metrics.get('market_cap', 0), 'currency')}
+Aktueller Kurs:     {price('current_price')}
+52-Wochen-Hoch:     {price('52w_high')}
+52-Wochen-Tief:     {price('52w_low')}
+Marktkapitalisierung: {format_number(metrics.get('market_cap') or 0, 'currency', source_currency, target_currency, curr_symbol)}
 
 --------------------------------------------------------------------------------
                       BEWERTUNGSKENNZAHLEN
@@ -2043,8 +2099,8 @@ FCF Yield:          {metrics.get('fcf_yield', 0):.2f}%
                          DIVIDENDE
 --------------------------------------------------------------------------------
 Dividendenrendite:  {div_yield:.2f}%
-Dividende (p.a.):   ${metrics.get('dividend_rate', 0):.2f}
-Ausschüttungsquote: {metrics.get('payout_ratio', 0)*100:.2f}%
+Dividende (p.a.):   {price('dividend_rate')}
+Ausschüttungsquote: {(metrics.get('payout_ratio') or 0)*100:.2f}%
 
 --------------------------------------------------------------------------------
                        RISIKOKENNZAHLEN
@@ -2551,16 +2607,27 @@ def calculate_historical_volatility(prices: pd.Series, window: int = 30) -> floa
     return max(0.05, min(1.0, annual_vol))
 
 
-def get_available_strikes(analyzer: StockAnalyzer) -> list:
-    """Holt verfügbare Strikes aus der Optionskette (unskaliert)."""
-    strikes = []
+def get_available_strikes(analyzer: StockAnalyzer, expiration: str = None,
+                          option_type: str = 'calls') -> list:
+    """
+    Holt verfügbare Strikes aus den geladenen Optionsketten (unskaliert).
+
+    Args:
+        expiration: Verfalltermin ('YYYY-MM-DD'); None = alle geladenen Termine
+        option_type: 'calls' oder 'puts'
+    """
+    strikes = set()
     try:
-        options = analyzer.get_options_chain()
-        if options and 'calls' in options and not options['calls'].empty:
-            strikes = sorted(options['calls']['strike'].unique())
-    except:
+        chains = analyzer.get_options_info().get('chains', {})
+        if expiration is not None:
+            chains = {expiration: chains[expiration]} if expiration in chains else {}
+        for chain in chains.values():
+            df = chain.get(option_type)
+            if df is not None and not df.empty:
+                strikes.update(float(k) for k in df['strike'].dropna().unique())
+    except Exception:
         pass
-    return strikes
+    return sorted(strikes)
 
 
 def find_nearest_strike(price: float, available_strikes: list, direction: str = 'above') -> float:
@@ -2693,9 +2760,6 @@ def run_simple_backtest(analyzer: StockAnalyzer, combination: dict,
         hist_start = bt_data['Close'].iloc[0]
         scale = current_price / hist_start
         
-        # Verfügbare Strikes aus aktueller Optionskette (unskaliert!)
-        available_strikes = get_available_strikes(analyzer)
-        
         n = combination['num_contracts']
         long_call = combination['long_call']
         short_put = combination['short_put']
@@ -2706,12 +2770,25 @@ def run_simple_backtest(analyzer: StockAnalyzer, combination: dict,
         put_strike = short_put['strike']
         hedge_strike = hedge_put['strike']
         
-        # Validiere Strikes
+        # Validiere Strikes gegen die Kette des jeweiligen Verfalltermins
         warnings = []
-        for name, strike in [('Long Call', call_strike), ('Short Put', put_strike), ('Hedge Put', hedge_strike)]:
-            is_valid, nearest = validate_strike(strike, available_strikes)
-            if not is_valid and available_strikes:
-                warnings.append(f"Strike {name} ${strike:.2f} nicht in Optionskette. Nächster: ${nearest:.2f}")
+        for name, leg, strike, opt_type in [('Long Call', long_call, call_strike, 'calls'),
+                                            ('Short Put', short_put, put_strike, 'puts'),
+                                            ('Hedge Put', hedge_put, hedge_strike, 'puts')]:
+            leg_strikes = get_available_strikes(analyzer, leg.get('expiry'), opt_type)
+            is_valid, nearest = validate_strike(strike, leg_strikes)
+            if not is_valid and leg_strikes:
+                warnings.append(f"Strike {name} {strike:.2f} {source_currency} nicht in Optionskette "
+                                f"({leg.get('expiry')}). Nächster: {nearest:.2f} {source_currency}")
+
+        # Strikes für die wöchentlichen Short Calls: Kette des kurzlaufenden Termins,
+        # sonst alle geladenen Call-Strikes, sonst Standard-Raster (find_nearest_strike)
+        short_call_exp = analyzer.get_strategy_options()['short_call_sell'].get('expiration')
+        available_strikes = get_available_strikes(analyzer, short_call_exp, 'calls') if short_call_exp else []
+        if not available_strikes:
+            available_strikes = get_available_strikes(analyzer, None, 'calls')
+        if not available_strikes:
+            warnings.append("Keine Optionsketten verfügbar – Short-Call-Strikes aus Standard-Raster geschätzt.")
         
         result['warnings'] = warnings
         
@@ -4052,7 +4129,8 @@ def main():
         st.divider()
         
         if st.button("📄 Zusammenfassung erstellen", type="secondary"):
-            summary = generate_summary(analyzer, metrics, thumbs)
+            summary = generate_summary(analyzer, metrics, thumbs,
+                                       source_currency, display_currency, curr_symbol)
             
             st.text_area("Zusammenfassung (kopieren oder speichern)", summary, height=400)
             

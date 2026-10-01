@@ -9,4 +9,4 @@ source venv/bin/activate
 pip install -r requirements.txt
 
 # 4. Starten
-streamlit run stock_analyzer.py
+streamlit run Simple_stock_analyzer_go.py

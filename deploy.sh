@@ -64,7 +64,7 @@ fi
 # Schritt 4: Add, Commit, Push
 echo ""
 echo "📦 Adding files..."
-git add Simple_stock_analyzer_go.py requirements.txt README.md
+git add Simple_stock_analyzer_go.py requirements.txt README.md docs .streamlit/config.toml
 echo -e "${GREEN}✅ Files added${NC}"
 
 echo ""
